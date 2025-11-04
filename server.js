@@ -19,9 +19,11 @@ const __dirname = path.resolve();
 app.use(
   cors({
     origin: [
-      "https://<YOUR-NEW-FRONTEND>.onrender.com",
+      "https://dhaksha-battery-log-n5l7.onrender.com",
       "http://localhost:5173", // optional for local testing
     ],
+    methods: "GET,POST,PUT,DELETE,OPTIONS",
+    allowedHeaders: "Content-Type, Authorization",
     credentials: true,
   })
 );
