@@ -1,51 +1,44 @@
+// middlewares/authMiddleware.js
 import jwt from "jsonwebtoken";
-import User from "../models/user.js";
-
-const JWT_SECRET = process.env.JWT_SECRET || "default_secret_key";
 
 /**
- * Protect Middleware — verifies JWT and attaches user
+ * protect - verifies Bearer token in Authorization header and attaches payload to req.user
  */
-export async function protect(req, res, next) {
+export function protect(req, res, next) {
   try {
-    const authHeader = req.headers.authorization;
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!token) return res.status(401).json({ message: "No token provided" });
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ message: "No token provided" });
+    const secret = process.env.JWT_SECRET || process.env.JWT_SECRET_KEY || process.env.JWT_KEY;
+    if (!secret) {
+      console.error("JWT secret not set in env");
+      return res.status(500).json({ message: "Server misconfigured (JWT secret)" });
     }
 
-    const token = authHeader.split(" ")[1];
-
-    // Verify token
-    const decoded = jwt.verify(token, JWT_SECRET);
-
-    // Find user in DB (ensure they still exist)
-    const user = await User.findById(decoded.id).select("-password");
-
-    if (!user) {
-      return res.status(401).json({ message: "User not found or removed" });
-    }
-
-    // Attach user to request
-    req.user = user;
-    next();
+    const payload = jwt.verify(token, secret);
+    req.user = payload; // payload should include { id, role, ... } when token was generated
+    return next();
   } catch (err) {
-    console.error("Auth error:", err.message);
+    console.error("protect middleware error:", err && err.message ? err.message : err);
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 }
 
 /**
- * Admin-only Middleware
+ * authAdmin - requires authenticated user with role === "admin"
+ * This relies on protect having set req.user; if not present it will run protect first.
  */
-export function adminOnly(req, res, next) {
+export function authAdmin(req, res, next) {
+  // If request not authenticated yet, run protect first then check role
   if (!req.user) {
-    return res.status(401).json({ message: "Not authenticated" });
+    return protect(req, res, () => {
+      // after protect completes, req.user should be set
+      if (req.user && req.user.role === "admin") return next();
+      return res.status(403).json({ message: "Admins only" });
+    });
   }
 
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admins only" });
-  }
-
-  next();
+  if (req.user.role === "admin") return next();
+  return res.status(403).json({ message: "Admins only" });
 }

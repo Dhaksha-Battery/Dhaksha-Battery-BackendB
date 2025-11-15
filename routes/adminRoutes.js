@@ -1,14 +1,26 @@
 // routes/adminRoutes.js
 import express from "express";
-import { protect, adminOnly } from "../middlewares/authMiddleware.js";
-import { getAllRows, searchByBatteryId, exportCsv } from "../controllers/adminController.js";
+import { authAdmin } from "../middlewares/authMiddleware.js"; // your admin middleware
+
+import {
+  getAllRows,
+  searchByBatteryId,
+  exportCsv,
+  getRowsByDate,
+} from "../controllers/adminController.js";
 
 const router = express.Router();
 
-// All admin routes require admin role
-router.get("/rows", protect, adminOnly, getAllRows);
-router.get("/rows/search", protect, adminOnly, searchByBatteryId);
-router.get("/rows/export", protect, adminOnly, exportCsv);
+// GET all rows
+router.get("/rows", authAdmin, getAllRows);
+
+// Search by battery ID
+router.get("/rows/search", authAdmin, searchByBatteryId);
+
+// Export by ID or by date (query params handled in controller)
+router.get("/rows/export", authAdmin, exportCsv);
+
+// NEW: Search rows by date
+router.get("/rows/by-date", authAdmin, getRowsByDate);
 
 export default router;
-
