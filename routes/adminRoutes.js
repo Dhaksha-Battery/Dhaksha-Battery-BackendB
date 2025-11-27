@@ -12,7 +12,7 @@ import {
 const router = express.Router();
 
 // GET all rows
-router.get("/rows", authAdmin, getAllRows);
+router.get("/rows", authAdmin, getAllRows);//authentication
 
 // Search by battery ID
 router.get("/rows/search", authAdmin, searchByBatteryId);
