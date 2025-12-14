@@ -10,6 +10,7 @@ import path from "path";
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import passwordRoutes from "./routes/passwordRoutes.js";
 import { initAdmin } from "./config/initAdmin.js";
 import { connectDB } from "./config/db.js";
 
@@ -36,6 +37,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/auth", authRoutes);
 app.use("/rows", userRoutes);
 app.use("/admin", adminRoutes);
+app.use("/auth", passwordRoutes);
 
 app.get("/", (req, res) => res.send("✅ Battery Log Backend is Running"));
 

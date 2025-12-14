@@ -4,8 +4,7 @@ import { register, login } from "../controllers/authController.js";
 
 const router = express.Router();
 
-// ✅ Register new user
-router.post("/register", async (req, res, next) => {
+router.post("/register", async (req, res) => {
   try {
     await register(req, res);
   } catch (err) {
@@ -14,8 +13,7 @@ router.post("/register", async (req, res, next) => {
   }
 });
 
-// ✅ Login existing user
-router.post("/login", async (req, res, next) => {
+router.post("/login", async (req, res) => {
   try {
     await login(req, res);
   } catch (err) {
