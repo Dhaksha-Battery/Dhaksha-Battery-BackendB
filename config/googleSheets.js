@@ -59,7 +59,7 @@ export async function getRawValues() {
   ensureConfig();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:Z`,
+    range: `${SHEET_NAME}!A:AZ`,
   });
   return res.data.values || [];
 }
@@ -82,7 +82,7 @@ export async function appendRow(rowArray) {
   if (!Array.isArray(rowArray)) throw new Error("appendRow expects array");
   const res = await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:Z`,
+    range: `${SHEET_NAME}!A:AZ`,
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: { values: [rowArray] },

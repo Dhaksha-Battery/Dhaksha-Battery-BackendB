@@ -7,9 +7,13 @@ import { getRawValues, appendRow } from "../config/googleSheets.js";
  */
 export async function countBatteryCycles(req, res) {
   try {
-    const batteryIdRaw = (req.query.batteryId || req.query.id || "").toString().trim();
+    const batteryIdRaw = (req.query.batteryId || req.query.id || "")
+      .toString()
+      .trim();
     if (!batteryIdRaw) {
-      return res.status(400).json({ message: "batteryId (query param) is required" });
+      return res
+        .status(400)
+        .json({ message: "batteryId (query param) is required" });
     }
 
     const rows = await getRowsAsObjectsSafe();
@@ -55,167 +59,134 @@ async function getRowsAsObjectsSafe() {
 export async function addUserRow(req, res) {
   try {
     const body = req.body || {};
-    // minimal validations
-    if (!body.id || !String(body.id).trim()) {
+
+    // 🔹 SUPPORT SINGLE + DUAL MODE
+    let primary = body;
+    let secondary = null;
+
+    if (body.primary && body.secondary) {
+      primary = body.primary;
+      secondary = body.secondary;
+    }
+
+    // ===== VALIDATIONS (PRIMARY ONLY) =====
+    if (!primary.id || !String(primary.id).trim()) {
       return res.status(400).json({ message: "Battery ID (id) is required" });
     }
-    if (!body.date) {
+    if (!primary.date) {
       return res.status(400).json({ message: "Date is required" });
     }
-    if (!body.name || !String(body.name).trim()) {
-      return res.status(400).json({ message: "Responsible person's name is required" });
+    if (!primary.name || !String(primary.name).trim()) {
+      return res
+        .status(400)
+        .json({ message: "Responsible person's name is required" });
     }
 
-    const batteryId = String(body.id).trim();
+    const batteryId = String(primary.id).trim();
 
-    // compute chargingCycle if not provided
+    // ===== COMPUTE CHARGING CYCLE (PRIMARY ONLY) =====
     let computedCycle = null;
-    if (body.chargingCycle === undefined || body.chargingCycle === null || String(body.chargingCycle).trim() === "") {
-      try {
-        const existingRows = await getRowsAsObjectsSafe();
-        const existingCount = existingRows.reduce((acc, r) => {
-          // header keys may be any case; try to check common header names
-          // prefer `id` exact key, otherwise search keys for something like 'id' or 'batteryid'
-          const idVal = (r.id ?? r.ID ?? r.Id ?? r.batteryId ?? r.batteryid ?? "").toString().trim();
-          return acc + (idVal === batteryId ? 1 : 0);
-        }, 0);
-        computedCycle = existingCount + 1;
-      } catch (countErr) {
-        console.warn("addUserRow: could not compute chargingCycle, continuing without computed value:", countErr && countErr.message ? countErr.message : countErr);
-      }
+    if (
+      primary.chargingCycle === undefined ||
+      primary.chargingCycle === null ||
+      String(primary.chargingCycle).trim() === ""
+    ) {
+      const rows = await getRowsAsObjectsSafe();
+      const count = rows.filter(
+        (r) => String(r.id ?? "").trim() === batteryId
+      ).length;
+      computedCycle = count + 1;
     }
 
-    // normalized row object (source values)
+    // ===== ROW OBJECT (BATTERY 1 + BATTERY 2) =====
     const rowObj = {
       id: batteryId,
-      date: body.date ?? "",
-      customerName: body.customerName ?? body.CustomerName ?? "",
-      zone: body.zone ?? body.Zone ?? "",
-      location: body.location ?? body.Location ?? "",
-      chargingCycle:
-        body.chargingCycle !== undefined && body.chargingCycle !== null && String(body.chargingCycle).trim() !== ""
-          ? body.chargingCycle
-          : computedCycle ?? "",
-      chargeCurrent: body.chargeCurrent ?? "",
-      battVoltInitial: body.battVoltInitial ?? body.battVoltInitial ?? "",
-      battVoltFinal: body.battVoltFinal ?? "",
-      chargeTimeInitial: body.chargeTimeInitial ?? "",
-      chargeTimeFinal: body.chargeTimeFinal ?? "",
-      duration: body.duration ?? "",
-      droneno: body.droneno ?? "",
-      temp: body.temp ?? "",
-      deformation: body.deformation ?? "",
-      others: body.others ?? "",
-      uin: body.uin ?? "",
-      name: body.name ?? "",
+      date: primary.date ?? "",
+      customerName: primary.customerName ?? "",
+      zone: primary.zone ?? "",
+      location: primary.location ?? "",
+      chargingCycle: primary.chargingCycle ?? computedCycle ?? "",
+      chargeCurrent: primary.chargeCurrent ?? "",
+      battVoltInitial: primary.battVoltInitial ?? "",
+      battVoltFinal: primary.battVoltFinal ?? "",
+      chargeTimeInitial: primary.chargeTimeInitial ?? "",
+      chargeTimeFinal: primary.chargeTimeFinal ?? "",
+      duration: primary.duration ?? "",
+      droneno: primary.droneno ?? "",
+      temp: primary.temp ?? "",
+      deformation: primary.deformation ?? "",
+      others: primary.others ?? "",
+      uin: primary.uin ?? "",
+      name: primary.name ?? "",
+
+      id_2: secondary?.id ?? "",
+      date_2: secondary?.date ?? "",
+      customerName_2: secondary?.customerName ?? "",
+      zone_2: secondary?.zone ?? "",
+      location_2: secondary?.location ?? "",
+      chargeCurrent_2: secondary?.chargeCurrent ?? "",
+      battVoltInitial_2: secondary?.battVoltInitial ?? "",
+      battVoltFinal_2: secondary?.battVoltFinal ?? "",
+      chargeTimeInitial_2: secondary?.chargeTimeInitial ?? "",
+      chargeTimeFinal_2: secondary?.chargeTimeFinal ?? "",
+      duration_2: secondary?.duration ?? "",
+      droneno_2: secondary?.droneno ?? "",
+      temp_2: secondary?.temp ?? "",
+      deformation_2: secondary?.deformation ?? "",
+      others_2: secondary?.others ?? "",
+      uin_2: secondary?.uin ?? "",
+      name_2: secondary?.name ?? "",
     };
 
-    // Read sheet header row to build append order
-    let values2d;
-    try {
-      values2d = await getRawValues();
-    } catch (gErr) {
-      console.error("addUserRow: getRawValues error:", gErr && gErr.message ? gErr.message : gErr);
-      return res.status(500).json({ message: "Failed to read sheet header", detail: gErr?.message ?? String(gErr) });
+    // ===== READ SHEET HEADER =====
+    const values2d = await getRawValues();
+    if (!Array.isArray(values2d) || !values2d.length) {
+      return res.status(500).json({ message: "Sheet header missing" });
     }
 
-    // If header row missing or invalid, use fallback order (legacy)
-    if (!Array.isArray(values2d) || values2d.length === 0) {
-      console.warn("addUserRow: no header row found, using fallback append order");
-      const fallback = [
-        rowObj.id,
-        rowObj.date,
-        rowObj.customerName,
-        rowObj.zone,
-        rowObj.location,
-        rowObj.chargingCycle,
-        rowObj.chargeCurrent,
-        rowObj.battVoltInitial,
-        rowObj.battVoltFinal,
-        rowObj.chargeTimeInitial,
-        rowObj.chargeTimeFinal,
-        rowObj.duration,
-        rowObj.droneno,
-        rowObj.temp,
-        rowObj.deformation,
-        rowObj.others,
-        rowObj.uin,
-        rowObj.name,
-      ];
-      try {
-        await appendRow(fallback);
-        return res.status(201).json({ message: "Submitted (fallback order)", chargingCycle: rowObj.chargingCycle, batteryId: rowObj.id });
-      } catch (appErr) {
-        console.error("addUserRow: appendRow fallback error:", appErr && appErr.message ? appErr.message : appErr);
-        return res.status(500).json({ message: "Failed to append row (fallback)", detail: appErr?.message ?? String(appErr) });
-      }
-    }
+    const headerRow = values2d[0].map((h) => String(h || "").trim());
 
-    const headerRow = values2d[0].map((h) => (h ? String(h).trim() : ""));
-    console.log("addUserRow: detected headerRow:", headerRow);
-
-    // normalize header to a matching key name in rowObj
+    // 🔑 FIX: EXPLICIT HEADER → FIELD MAPPING
     const normalize = (s) =>
-      String(s || "")
+      s
         .toLowerCase()
         .replace(/\s+/g, "")
-        .replace(/[^a-z0-9]/g, "");
+        .replace(/[^a-z0-9_]/g, "");
 
-    // map several common header names to our rowObj keys
-    const headerToField = {
-      id: "id",
-      batteryid: "id",
-      battery: "id",
-      date: "date",
-      customername: "customerName",
-      customer: "customerName",
-      zone: "zone",
-      location: "location",
-      chargingcycle: "chargingCycle",
-      chargecycle: "chargingCycle",
-      chargecurrent: "chargeCurrent",
-      battvoltinitial: "battVoltInitial",
-      battvoltfinal: "battVoltFinal",
-      chargetimeinitial: "chargeTimeInitial",
-      chargetimefinal: "chargeTimeFinal",
-      duration: "duration",
-      droneno: "droneno",
-      temp: "temp",
-      temperature: "temp",
-      deformation: "deformation",
-      others: "others",
-      uin: "uin",
-      name: "name",
-    };
-
-    // construct rowArray in header order
-    const rowArray = headerRow.map((hdr) => {
-      const key = normalize(hdr);
-      const mapped = headerToField[key];
-      if (mapped && Object.prototype.hasOwnProperty.call(rowObj, mapped)) {
-        return rowObj[mapped];
-      }
-
-      // fallback: header exactly matches rowObj property name (case-sensitive)
-      if (Object.prototype.hasOwnProperty.call(rowObj, hdr)) {
-        return rowObj[hdr];
-      }
-
-      // final fallback: empty cell
-      return "";
+    const headerToField = {};
+    Object.keys(rowObj).forEach((k) => {
+      headerToField[normalize(k)] = k;
     });
 
-    console.log("addUserRow: final rowArray to append:", rowArray);
+    //  normalize rowObj keys once
+    const normalizedRowObj = {};
+    Object.keys(rowObj).forEach((k) => {
+      normalizedRowObj[normalize(k)] = rowObj[k];
+    });
 
-    try {
-      await appendRow(rowArray);
-      return res.status(201).json({ message: "Submitted", chargingCycle: rowObj.chargingCycle, batteryId: rowObj.id });
-    } catch (appendErr) {
-      console.error("addUserRow: appendRow error:", appendErr && appendErr.message ? appendErr.message : appendErr);
-      return res.status(500).json({ message: "Failed to append row", detail: appendErr?.message ?? String(appendErr) });
-    }
+    //  map headers to normalized row object
+    const rowArray = headerRow.map((hdr) => {
+      const key = normalize(hdr);
+      return normalizedRowObj[key] ?? "";
+    });
+
+    console.log("===== DEBUG DUAL BATTERY =====");
+    console.log("PRIMARY DATA:", primary);
+    console.log("SECONDARY DATA:", secondary);
+    console.log("ROW OBJ:", rowObj);
+    console.log("HEADER ROW:", headerRow);
+    console.log("ROW ARRAY:", rowArray);
+    console.log("===== END DEBUG =====");
+
+    await appendRow(rowArray);
+
+    return res.status(201).json({
+      message: "Submitted successfully",
+      chargingCycle: rowObj.chargingCycle,
+      batteryId: rowObj.id,
+    });
   } catch (err) {
-    console.error("addUserRow unexpected error:", err && err.message ? err.message : err);
-    return res.status(500).json({ message: "Unexpected server error", detail: err?.message ?? String(err) });
+    console.error("addUserRow error:", err);
+    return res.status(500).json({ message: "Submission failed" });
   }
 }
