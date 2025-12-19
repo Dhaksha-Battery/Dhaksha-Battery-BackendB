@@ -2,27 +2,53 @@
 import { getRawValues, appendRow } from "../config/googleSheets.js";
 
 /**
+ * Helper: rows → objects
+ */
+async function getRowsAsObjectsSafe() {
+  const values = await getRawValues();
+  if (!Array.isArray(values) || values.length < 1) return [];
+
+  const headers = values[0].map((h) => (h ? String(h).trim() : ""));
+  const rows = values.slice(1).map((r) => {
+    const obj = {};
+    headers.forEach((h, i) => {
+      obj[h] = r[i] ?? "";
+    });
+    return obj;
+  });
+  return rows;
+}
+
+/**
+ * ✅ SINGLE SOURCE OF TRUTH
+ * Counts how many times a batteryId appears
+ * in BOTH id and id_2 columns.
+ */
+async function countBatteryParticipation(batteryId) {
+  const rows = await getRowsAsObjectsSafe();
+  const bid = String(batteryId).trim();
+
+  return rows.reduce((acc, r) => {
+    const id1 = String(r.id ?? "").trim();
+    const id2 = String(r.id_2 ?? "").trim();
+    return id1 === bid || id2 === bid ? acc + 1 : acc;
+  }, 0);
+}
+
+/**
  * GET /rows/cycles?batteryId=...
- * Return count of rows for a battery id.
+ * Lookup cycles (FIXED)
  */
 export async function countBatteryCycles(req, res) {
   try {
-    const batteryIdRaw = (req.query.batteryId || req.query.id || "")
-      .toString()
-      .trim();
-    if (!batteryIdRaw) {
+    const batteryId = (req.query.batteryId || "").toString().trim();
+    if (!batteryId) {
       return res
         .status(400)
         .json({ message: "batteryId (query param) is required" });
     }
 
-    const rows = await getRowsAsObjectsSafe();
-    const batteryId = batteryIdRaw;
-    const cycles = rows.reduce((acc, r) => {
-      const cell = (r.id ?? "").toString().trim();
-      return acc + (cell === batteryId ? 1 : 0);
-    }, 0);
-
+    const cycles = await countBatteryParticipation(batteryId);
     return res.json({ batteryId, cycles });
   } catch (err) {
     console.error("countBatteryCycles error:", err);
@@ -31,36 +57,13 @@ export async function countBatteryCycles(req, res) {
 }
 
 /**
- * Helper that returns rows as array of objects by mapping header -> value.
- * Uses getRawValues (2D) and maps header row to subsequent rows.
- */
-async function getRowsAsObjectsSafe() {
-  const values = await getRawValues(); // from googleSheets.js
-  if (!Array.isArray(values) || values.length < 1) return [];
-
-  const headers = values[0].map((h) => (h ? String(h).trim() : ""));
-  const rows = values.slice(1).map((r) => {
-    const obj = {};
-    headers.forEach((h, i) => {
-      const key = h || `col${i}`;
-      obj[key] = r[i] ?? "";
-    });
-    return obj;
-  });
-  return rows;
-}
-
-/**
  * POST /rows
- * Accepts JSON body and appends a row to the Google Sheet.
- * If chargingCycle is not provided, server computes it as (existing rows for that battery id) + 1.
- * Uses sheet header row to determine append order, preventing column shifts.
+ * Supports single + dual battery submission
  */
 export async function addUserRow(req, res) {
   try {
     const body = req.body || {};
 
-    // 🔹 SUPPORT SINGLE + DUAL MODE
     let primary = body;
     let secondary = null;
 
@@ -69,9 +72,9 @@ export async function addUserRow(req, res) {
       secondary = body.secondary;
     }
 
-    // ===== VALIDATIONS (PRIMARY ONLY) =====
+    // ===== VALIDATION (PRIMARY) =====
     if (!primary.id || !String(primary.id).trim()) {
-      return res.status(400).json({ message: "Battery ID (id) is required" });
+      return res.status(400).json({ message: "Battery ID is required" });
     }
     if (!primary.date) {
       return res.status(400).json({ message: "Date is required" });
@@ -82,30 +85,16 @@ export async function addUserRow(req, res) {
         .json({ message: "Responsible person's name is required" });
     }
 
-    const batteryId = String(primary.id).trim();
+    const primaryId = String(primary.id).trim();
 
-    // ===== COMPUTE CHARGING CYCLE (PRIMARY ONLY) =====
-    let computedCycle = null;
-    if (
-      primary.chargingCycle === undefined ||
-      primary.chargingCycle === null ||
-      String(primary.chargingCycle).trim() === ""
-    ) {
-      const rows = await getRowsAsObjectsSafe();
-      const count = rows.filter(
-        (r) => String(r.id ?? "").trim() === batteryId
-      ).length;
-      computedCycle = count + 1;
-    }
-
-    // ===== ROW OBJECT (BATTERY 1 + BATTERY 2) =====
+    // ===== BUILD ROW OBJECT =====
     const rowObj = {
-      id: batteryId,
+      // ---- BATTERY 1 ----
+      id: primaryId,
       date: primary.date ?? "",
       customerName: primary.customerName ?? "",
       zone: primary.zone ?? "",
       location: primary.location ?? "",
-      chargingCycle: primary.chargingCycle ?? computedCycle ?? "",
       chargeCurrent: primary.chargeCurrent ?? "",
       battVoltInitial: primary.battVoltInitial ?? "",
       battVoltFinal: primary.battVoltFinal ?? "",
@@ -119,6 +108,7 @@ export async function addUserRow(req, res) {
       uin: primary.uin ?? "",
       name: primary.name ?? "",
 
+      // ---- BATTERY 2 ----
       id_2: secondary?.id ?? "",
       date_2: secondary?.date ?? "",
       customerName_2: secondary?.customerName ?? "",
@@ -138,52 +128,44 @@ export async function addUserRow(req, res) {
       name_2: secondary?.name ?? "",
     };
 
-    // ===== READ SHEET HEADER =====
+    // ===== MAP TO SHEET HEADER =====
     const values2d = await getRawValues();
-    if (!Array.isArray(values2d) || !values2d.length) {
-      return res.status(500).json({ message: "Sheet header missing" });
-    }
-
     const headerRow = values2d[0].map((h) => String(h || "").trim());
 
-    // 🔑 FIX: EXPLICIT HEADER → FIELD MAPPING
     const normalize = (s) =>
-      s
-        .toLowerCase()
-        .replace(/\s+/g, "")
-        .replace(/[^a-z0-9_]/g, "");
+      s.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9_]/g, "");
 
-    const headerToField = {};
+    const normalizedRow = {};
     Object.keys(rowObj).forEach((k) => {
-      headerToField[normalize(k)] = k;
+      normalizedRow[normalize(k)] = rowObj[k];
     });
 
-    //  normalize rowObj keys once
-    const normalizedRowObj = {};
-    Object.keys(rowObj).forEach((k) => {
-      normalizedRowObj[normalize(k)] = rowObj[k];
-    });
-
-    //  map headers to normalized row object
-    const rowArray = headerRow.map((hdr) => {
-      const key = normalize(hdr);
-      return normalizedRowObj[key] ?? "";
-    });
-
-    console.log("===== DEBUG DUAL BATTERY =====");
-    console.log("PRIMARY DATA:", primary);
-    console.log("SECONDARY DATA:", secondary);
-    console.log("ROW OBJ:", rowObj);
-    console.log("HEADER ROW:", headerRow);
-    console.log("ROW ARRAY:", rowArray);
-    console.log("===== END DEBUG =====");
+    const rowArray = headerRow.map((h) => normalizedRow[normalize(h)] ?? "");
 
     await appendRow(rowArray);
 
+    // ===== ✅ FINAL CORRECT CYCLE COUNTS (AFTER INSERT) =====
+    const battery1Cycles =
+      (await countBatteryParticipation(primaryId)) + 0;
+
+    let battery2Cycles = null;
+    if (secondary?.id) {
+      battery2Cycles =
+        (await countBatteryParticipation(secondary.id)) + 0;
+    }
+
     return res.status(201).json({
       message: "Submitted successfully",
-      chargingCycle: rowObj.chargingCycle,
-      batteryId: rowObj.id,
+      battery1: {
+        id: primaryId,
+        cycles: battery1Cycles,
+      },
+      battery2: secondary
+        ? {
+            id: secondary.id,
+            cycles: battery2Cycles,
+          }
+        : null,
     });
   } catch (err) {
     console.error("addUserRow error:", err);
